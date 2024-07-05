@@ -12,3 +12,4 @@ from robomimic.algo.td3_bc import TD3_BC
 from robomimic.algo.gpt_few_shot import GPT_Few_Shot
 
 from robomimic.algo.kat import KAT
+from robomimic.algo.multi_kat import Multi_KAT

@@ -13,3 +13,4 @@ from robomimic.config.td3_bc_config import TD3_BCConfig
 from robomimic.config.gpt_few_shot_config import GPT_Few_ShotConfig
 
 from robomimic.config.kat_config import KAT_Config
+from robomimic.config.multi_kat_config import Multi_KAT_Config
