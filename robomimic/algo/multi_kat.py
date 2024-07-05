@@ -60,6 +60,11 @@ class Multi_KAT(PolicyAlgo):
         self.run_length = self.algo_config.run_length
         self.demonstation_data_path = self.algo_config.demonstation_data_path
         self.ensemble_size = self.algo_config.ensemble_size
+        self.garanteed_demonstation_data_ids = self.algo_config.garanteed_demonstration_data_ids
+        self.requestable_demonstation_data_ids = self.algo_config.requestable_demonstration_data_ids
+
+        assert len(self.garanteed_demonstation_data_ids) + len(self.requestable_demonstation_data_ids) == self.number_of_demonstations, "Make sure demonsation_data_ids len is equal to number_of_demonstrations"
+        assert len(self.garanteed_demonstation_data_ids) >= 1, "Make sure there is at least one guaranteed demonstation data id"
 
         with h5py.File(self.demonstation_data_path, 'r') as hdf5_file:
             # List all groups that start with 'demo_' in the 'data' group
@@ -155,36 +160,15 @@ class Multi_KAT(PolicyAlgo):
             "object_to_eef_position": obs_obj_to_ee_position.tolist(),
             "object_to_eef_orientation": obs_obj_to_ee_orientation.tolist()
         }
-
-    def train_on_batch(self, batch, epoch, validate=False):
-        """
-        Training on a single batch of data.
-
-        Args:
-            batch (dict): dictionary with torch.Tensors sampled
-                from a data loader and filtered by @process_batch_for_training
-
-            epoch (int): epoch number - required by some Algos that need
-                to perform staged training and early stopping
-
-            validate (bool): if True, don't perform any learning updates.
-
-        Returns:
-            info (dict): dictionary of relevant inputs, outputs, and losses
-                that might be relevant for logging
-        """
-        # with TorchUtils.maybe_no_grad(no_grad=validate):
-        info = super(Multi_KAT, self).train_on_batch(batch, epoch, validate=validate)
-
-        for demo_iter in range(self.number_of_demonstations):
+    def _add_garenteed_demonstration_data(self):
+         for demo_iter, demo_id in enumerate(self.garanteed_demonstation_data_ids):
             # generate a random number from 0 to X and reroll if number is in the demo_ids
-            demo_id = random.randint(0, self.total_number_of_demos - 1)
 
             if len(self.demo_ids) == self.total_number_of_demos:
                 assert False, "All demos have been queried"
 
             while demo_id in self.demo_ids :
-                demo_id = random.randint(0, self.total_number_of_demos - 1)
+                assert False, "Demo has already been queried, you have duplicate IDs"
             self.demo_ids.append(demo_id)
 
             # get the demo data
@@ -209,6 +193,8 @@ class Multi_KAT(PolicyAlgo):
                 # right_position = [round(coord, self.decimal_places) for coord in right_position]
                 # left_position = [round(coord, self.decimal_places) for coord in left_position]
 
+                gripper = self._gripper_0_to_1(gripper, mode="encode")
+
                 # mulitply all values by 100 to eliminate decimal place 
                 front_position = [int(coord * 100) for coord in front_position]
                 right_position = [int(coord * 100) for coord in right_position]
@@ -228,6 +214,87 @@ class Multi_KAT(PolicyAlgo):
                 f.write(f"Input: {starting_obs}\n")
                 # f.write(f"Output: {actions.tolist()}\n")
                 f.write(f"Output: {kat_actions}\n")
+
+    def _add_requestable_demonstration_data(self):
+        for demo_iter, demo_id in enumerate(self.requestable_demonstation_data_ids):
+            if len(self.demo_ids) == self.total_number_of_demos:
+                assert False, "All demos have been queried"
+
+            while demo_id in self.demo_ids :
+                assert False, "Demo has already been queried, you have duplicate IDs"
+            self.demo_ids.append(demo_id)
+
+            # get the demo data
+            demo_data = self._demonstation_data(demo_id)
+
+            # get the first observation
+            starting_obs = demo_data["obs"]["object"][0].round(self.decimal_places)
+            starting_obs = self._obs_to_obsdict(starting_obs)
+            starting_obs_size = len(starting_obs)
+
+            # Send to the LLM
+            context_description = "You are a robot and you are to genereate the possible waypoits in triplets formed of (dx, dy, dz), the format is [[front waypoint], [right waypoint], [right waypoint], gripper value] based on the input in json format with the key: 'waypoints' and to 2 decimal places"
+            scene_objects = str(starting_obs)
+            instruction = "Give the full answer. Generate waypoint paths that you can do based on the objects in the scene in json format as a list of waypoints do not split up into position and orientation: "
+
+            help_needed = self.open_ai_client.process_ensemble_training(self.prompt_path, instruction, scene_objects, context_description)
+
+            if help_needed:
+                # subsample the data to self.sample_frequency
+                demo_data["actions"] = demo_data["actions"][::self.sample_frequency]
+
+                actions = demo_data["actions"].round(self.decimal_places)
+                actions_size = len(actions)
+                actions_deomonstation_legnth = len(actions[0])
+
+                kat_actions = []
+                for action in actions:
+                    left_position, right_position, front_position, gripper = KATUtils.generate_waypoints(action)
+                    
+                    # mulitply all values by 100 to eliminate decimal place 
+                    front_position = [int(coord * 100) for coord in front_position]
+                    right_position = [int(coord * 100) for coord in right_position]
+                    left_position = [int(coord * 100) for coord in left_position]
+                    # remove decial place values 
+                    front_position = [round(coord, 0) for coord in front_position]
+                    right_position = [round(coord, 0) for coord in right_position]
+                    left_position = [round(coord, 0) for coord in left_position]
+
+                    # combine as a list
+                    kat_action = [front_position, right_position, left_position, gripper]
+                    kat_actions.append(kat_action)
+
+                with open(self.prompt_path, "a") as f:
+                    f.write(f"Example {demo_iter}:\n")
+                    f.write(f"Input: {starting_obs}\n")
+                    # f.write(f"Output: {actions.tolist()}\n")
+                    f.write(f"Output: {kat_actions}\n")
+
+        pass
+        
+
+    def train_on_batch(self, batch, epoch, validate=False):
+        """
+        Training on a single batch of data.
+
+        Args:
+            batch (dict): dictionary with torch.Tensors sampled
+                from a data loader and filtered by @process_batch_for_training
+
+            epoch (int): epoch number - required by some Algos that need
+                to perform staged training and early stopping
+
+            validate (bool): if True, don't perform any learning updates.
+
+        Returns:
+            info (dict): dictionary of relevant inputs, outputs, and losses
+                that might be relevant for logging
+        """
+        # with TorchUtils.maybe_no_grad(no_grad=validate):
+        info = super(Multi_KAT, self).train_on_batch(batch, epoch, validate=validate)
+
+        self._add_garenteed_demonstration_data()
+        self._add_requestable_demonstration_data()
 
         return info
 
@@ -270,7 +337,7 @@ class Multi_KAT(PolicyAlgo):
         # with open("_obs_dictionary.txt", "a") as f:
         #     f.write(str(obs_dict))
         #     f.write("\n")
-        # return self.nets["policy"](obs_dict, goal_dict=goal_dict) #Remove to activate GPT Querying
+        return self.nets["policy"](obs_dict, goal_dict=goal_dict) #Remove to activate GPT Querying
 
 
         if self.llm_queried == False:
@@ -349,3 +416,15 @@ class Multi_KAT(PolicyAlgo):
             f.write("Your task: {task}\n")
             f.write("Now do it for this input {scene_objects}\n")
         return super().on_epoch_end(epoch)
+
+    def _gripper_0_to_1(self, gripper, mode="encode"):
+        if mode == "encode":
+            if gripper == -1:
+                return 0
+            else:
+                return 1
+        elif mode == "decode":
+            if gripper == 0:
+                return -1
+            else:
+                return 1

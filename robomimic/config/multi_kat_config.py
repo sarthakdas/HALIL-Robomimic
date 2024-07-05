@@ -21,8 +21,13 @@ class Multi_KAT_Config(BaseConfig):
         self.algo.run_length = 20
         self.algo.decimal_places = 3
         self.algo.demonstation_data_path = "tmp/square.hdf5"
+
+        # Make sure demonsation_data_ids len is equal to number_of_demonstrations
+        self.algo.garanteed_demonstration_data_ids = [1,2,3,4,5]
+        self.algo.requestable_demonstration_data_ids = [6,7,8,9,10]
         self.algo.number_of_demonstrations = 10  # number of demonstrations to use for prompt
+
         self.algo.ensemble_size = 5
 
-         # optimization parameters REQUIRED FOR ROBOMIMIC
+        # optimization parameters REQUIRED FOR ROBOMIMIC
         self.algo.optim_params = {}

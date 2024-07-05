@@ -207,6 +207,7 @@ class KAT(PolicyAlgo):
                 # front_position = [round(coord, self.decimal_places) for coord in front_position]
                 # right_position = [round(coord, self.decimal_places) for coord in right_position]
                 # left_position = [round(coord, self.decimal_places) for coord in left_position]
+                gripper = self._gripper_0_to_1(gripper, mode="encode")
 
                 # mulitply all values by 100 to eliminate decimal place 
                 front_position = [int(coord * 100) for coord in front_position]
@@ -290,6 +291,7 @@ class KAT(PolicyAlgo):
                 kat_action[1] = [coord / 100 for coord in kat_action[1]]
                 kat_action[2] = [coord / 100 for coord in kat_action[2]]
 
+                gripper = self._gripper_0_to_1(kat_action[3], mode="decode")
                 # print(kat_action)
                 # with open("_action_sequence_XX.txt", "a") as f:
                 #     f.write(str(kat_action))
@@ -299,7 +301,7 @@ class KAT(PolicyAlgo):
                 x, y, z, roll, pitch, yaw = action
 
 
-                self.action_list.append([x, y, z, roll, pitch, yaw, kat_action[3]]) # append the action and the gripper value
+                self.action_list.append([x, y, z, roll, pitch, yaw, gripper]) # append the action and the gripper value
             self.llm_queried = True
 
             with open("_action_sequence_raw.txt", "a") as f:
@@ -348,3 +350,15 @@ class KAT(PolicyAlgo):
             f.write("Your task: {task}\n")
             f.write("Now do it for this input {scene_objects}\n")
         return super().on_epoch_end(epoch)
+
+    def _gripper_0_to_1(self, gripper, mode="encode"):
+        if mode == "encode":
+            if gripper == -1:
+                return 0
+            else:
+                return 1
+        elif mode == "decode":
+            if gripper == 0:
+                return -1
+            else:
+                return 1
