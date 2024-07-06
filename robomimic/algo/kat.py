@@ -279,7 +279,7 @@ class KAT(PolicyAlgo):
             scene_objects = str(obs_dictionary)
             instruction = "Give the full answer. Generate waypoint paths that you can do based on the objects in the scene in json format as a list of waypoints do not split up into position and orientation: "
 
-            self.kat_action_list = self.open_ai_client.process_ensemble(self.prompt_path, instruction, scene_objects, context_description)
+            self.kat_action_list = self.open_ai_client.process_test(self.prompt_path, instruction, scene_objects, context_description)
 
             self.action_list = []
             for kat_action in self.kat_action_list:

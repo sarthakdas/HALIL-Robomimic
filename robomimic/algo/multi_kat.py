@@ -221,7 +221,7 @@ class Multi_KAT(PolicyAlgo):
                 assert False, "All demos have been queried"
 
             while demo_id in self.demo_ids :
-                assert False, "Demo has already been queried, you have duplicate IDs"
+                assert False, "Demo has already been queried, you have duplicate IDs that are"
             self.demo_ids.append(demo_id)
 
             # get the demo data
@@ -236,8 +236,19 @@ class Multi_KAT(PolicyAlgo):
             context_description = "You are a robot and you are to genereate the possible waypoits in triplets formed of (dx, dy, dz), the format is [[front waypoint], [right waypoint], [right waypoint], gripper value] based on the input in json format with the key: 'waypoints' and to 2 decimal places"
             scene_objects = str(starting_obs)
             instruction = "Give the full answer. Generate waypoint paths that you can do based on the objects in the scene in json format as a list of waypoints do not split up into position and orientation: "
+            
+            self.prompt_path = "_demo_data.txt"
+            # load the prompt file
+            with open(self.prompt_path, "r") as f:
+                prompt_data = f.read()
+            prompt_data += "\n"
+            prompt_data += "Context: {context_description}\n"
+            prompt_data += "Your task: {task}\n"
+            prompt_data += "Now do it for this input {scene_objects}\n"
 
-            help_needed = self.open_ai_client.process_ensemble_training(self.prompt_path, instruction, scene_objects, context_description)
+            with open("_demo_data_temp.txt", "w") as f:
+                f.write(prompt_data)
+            help_needed = self.open_ai_client.process_ensemble_training("_demo_data_temp.txt", instruction, scene_objects, context_description, self.ensemble_size, temperature=0.2)
 
             if help_needed:
                 # subsample the data to self.sample_frequency
@@ -337,7 +348,7 @@ class Multi_KAT(PolicyAlgo):
         # with open("_obs_dictionary.txt", "a") as f:
         #     f.write(str(obs_dict))
         #     f.write("\n")
-        return self.nets["policy"](obs_dict, goal_dict=goal_dict) #Remove to activate GPT Querying
+        # return self.nets["policy"](obs_dict, goal_dict=goal_dict) #Remove to activate GPT Querying
 
 
         if self.llm_queried == False:
@@ -346,7 +357,7 @@ class Multi_KAT(PolicyAlgo):
             scene_objects = str(obs_dictionary)
             instruction = "Give the full answer. Generate waypoint paths that you can do based on the objects in the scene in json format as a list of waypoints do not split up into position and orientation: "
 
-            self.kat_action_list = self.open_ai_client.process_ensemble(self.prompt_path, instruction, scene_objects, context_description)
+            self.kat_action_list = self.open_ai_client.process_test(self.prompt_path, instruction, scene_objects, context_description)
 
             self.action_list = []
             for kat_action in self.kat_action_list:
