@@ -47,6 +47,43 @@ def optimize_triangle(points, triangle_dimensions):
 
     return optimized_vertices
 
+def quaternion_to_rotation_matrix(q):
+    w, x, y, z = q
+    R = np.array([
+        [1 - 2 * (y**2 + z**2), 2 * (x*y - z*w), 2 * (x*z + y*w)],
+        [2 * (x*y + z*w), 1 - 2 * (x**2 + z**2), 2 * (y*z - x*w)],
+        [2 * (x*z - y*w), 2 * (y*z + x*w), 1 - 2 * (x**2 + y**2)]
+    ])
+    return R
+
+def generate_waypoints_quaternion(waypoint):
+    x, y, z, qx, qy, qz, qw, gripper = waypoint
+
+    # Quaternion to rotation matrix
+    R = quaternion_to_rotation_matrix((qw, qx, qy, qz))
+
+    # Directions
+    left_direction = np.array([-0.05, 0, 0])   # Left along negative X
+    right_direction = np.array([0.05, 0, 0])   # Right along positive X
+    front_direction = np.array([0, 0.1, 0])    # Forward along positive Y
+
+    # Apply rotation
+    left_transformed = R @ left_direction
+    right_transformed = R @ right_direction
+    front_transformed = R @ front_direction
+
+    # Calculate waypoints
+    left_waypoint = (x + left_transformed[0], y + left_transformed[1], z + left_transformed[2])
+    right_waypoint = (x + right_transformed[0], y + right_transformed[1], z + right_transformed[2])
+    front_waypoint = (x + front_transformed[0], y + front_transformed[1], z + front_transformed[2])
+
+    # convert to list for easier access
+    left_waypoint = list(left_waypoint)
+    right_waypoint = list(right_waypoint)
+    front_waypoint = list(front_waypoint)
+
+    return left_waypoint, right_waypoint, front_waypoint, gripper
+
 def generate_waypoints(waypoint):
     x, y, z, roll, pitch, yaw, gripper = waypoint
 
@@ -156,7 +193,7 @@ def generate_original_waypoints(points):
 
     Parameters:
 
-    points (np.array): The triangle vertices
+    points (np.array): The triangle vertices only takes in x,y,z remove the gripper value before passing it to this function
 
     Returns:
 

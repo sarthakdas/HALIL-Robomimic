@@ -62,10 +62,10 @@
     },
     "algo": {
         "sample_frequency": 1,
-        "run_length": 50,
-        "decimal_places": 3,
+        "run_length": 75,
+        "decimal_places": 2,
         "demonstation_data_path": "tmp/can.hdf5",
-        "number_of_demonstrations": 20,
+        "number_of_demonstrations": 30,
         "optim_params": {}
     },
     "observation": {

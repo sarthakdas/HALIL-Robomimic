@@ -348,7 +348,7 @@ class Multi_KAT(PolicyAlgo):
         # with open("_obs_dictionary.txt", "a") as f:
         #     f.write(str(obs_dict))
         #     f.write("\n")
-        # return self.nets["policy"](obs_dict, goal_dict=goal_dict) #Remove to activate GPT Querying
+        return self.nets["policy"](obs_dict, goal_dict=goal_dict) #Remove to activate GPT Querying
 
 
         if self.llm_queried == False:
