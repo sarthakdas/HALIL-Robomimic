@@ -67,6 +67,14 @@ class EnvGym(EB.EnvBase):
         self._current_obs = obs
         self._current_reward = reward
         self._current_done = done
+
+        # save obs and info to a text file
+        with open('obs.txt', 'a') as f:
+            f.write(str(obs) + '\n')
+        with open('info.txt', 'a') as f:
+            f.write(str(info) + '\n')
+
+
         return self.get_observation(obs), reward, self.is_done(), info
 
     def reset(self):

@@ -67,6 +67,11 @@ class EnvBase(abc.ABC):
             done (bool): whether the task is done
             info (dict): extra information
         """
+
+        # save the action to a text file 
+        with open("__action.txt", "w") as f:
+            f.write(str(action))
+
         return
 
     @abc.abstractmethod

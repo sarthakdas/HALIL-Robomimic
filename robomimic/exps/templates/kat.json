@@ -29,7 +29,7 @@
         "rollout": {
             "enabled": true,
             "n": 1,
-            "horizon": 400,
+            "horizon": 1000,
             "rate": 50,
             "warmstart": 0,
             "terminate_on_success": true
@@ -61,10 +61,10 @@
         "seed": 1
     },
     "algo": {
-        "sample_frequency": 1,
-        "run_length": 75,
+        "sample_frequency": 2,
+        "run_length": 10,
         "decimal_places": 2,
-        "demonstation_data_path": "tmp/can.hdf5",
+        "demonstation_data_path": "tmp/lift.hdf5",
         "number_of_demonstrations": 30,
         "optim_params": {}
     },

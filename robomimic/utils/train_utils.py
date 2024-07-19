@@ -225,6 +225,10 @@ def run_rollout(
             # get action from policy
             ac = policy(ob=ob_dict, goal=goal_dict)
 
+            # save ob_dict and ac to a text file
+            # with open('__ob_dict.txt', 'a') as f:
+            #     f.write(str(ob_dict) + '\n')
+
             # play action
             ob_dict, r, done, _ = env.step(ac)
 

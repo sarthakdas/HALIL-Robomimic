@@ -21,12 +21,14 @@ from robomimic.algo import register_algo_factory_func, PolicyAlgo
 
 import llminterface.llm_utils as LLMUtils
 import katinterface.kat_utils as KATUtils
+import katinterface.pidcontroller as PIDController
 
 import json
 import time
 import random
 import h5py
 import numpy as np
+import pickle
 
 @register_algo_factory_func("kat")
 def algo_config_to_class(algo_config):
@@ -75,7 +77,7 @@ class KAT(PolicyAlgo):
         self.llm_response = None
         self.demo_ids = []
         self.prompt_path = "_demo_data.txt"
-        self.action_iteration = 0
+        self.action_iteration = None
         self.action_to_execute = []
 
         self._setup()
@@ -88,6 +90,8 @@ class KAT(PolicyAlgo):
         with open(self.prompt_path, "w") as f:
             f.write("You are a robot that is to generate possible waypoints to control the robot, the input is the object on the table and the ouput is the waypoints")
             f.write("\n")
+
+        self.controller = PIDController.PController6D(5,0.1,0.01)
         pass
 
     def process_batch_for_training(self, batch):
@@ -189,10 +193,6 @@ class KAT(PolicyAlgo):
             # get the demo data
             demo_data = self._demonstation_data(demo_id)
 
-            # save the demo data to a file
-            # with open("_full_demonstrations_raw.txt", "a") as f:
-            #     f.write(f"{demo_data}\n")
-
             # subsample the data to self.sample_frequency
             demo_data["actions"] = demo_data["actions"][::self.sample_frequency]
 
@@ -226,9 +226,7 @@ class KAT(PolicyAlgo):
 
             # save the data to a file
             # convert to list actions 
-            actions_list = actions.tolist()
-            with open("_demonstrations_raw.txt", "a") as f:
-                f.write(f"{actions_list}\n")
+
 
             # save the starting observation to a file as a list 
             with open("_demo_starting_observation.txt", "a") as f:
@@ -237,6 +235,9 @@ class KAT(PolicyAlgo):
 
             kat_actions = []
             for robot_state in robot_ee_pos_quate_gripper:
+                _robot_state = robot_state.tolist()
+                with open("_demonstrations_raw.txt", "a") as f:
+                    f.write(f"{_robot_state}\n")
                 left_position, right_position, front_position, gripper = KATUtils.generate_waypoints_quaternion(robot_state)
                 # round to self.decimal_places and convert to list
                 # front_position = [round(coord, self.decimal_places) for coord in front_position]
@@ -305,9 +306,50 @@ class KAT(PolicyAlgo):
         # with open("_obs_dictionary.txt", "a") as f:
         #     f.write(str(obs_dict))
         #     f.write("\n")
-        # return self.nets["policy"](obs_dict, goal_dict=goal_dict) #Remove to activate GPT Querying
 
+        # print to two dp
+        current_pos_orn = obs_dict["robot0_eef_pos"][0].tolist() + obs_dict["robot0_eef_quat"][0].tolist() # x,y,z,quaternion
 
+        self.controller.epsilon = 0.01
+        self.controller.set_tuning(1, 0.1)
+        # # print to 2dp
+        def quaternion_to_rpy(q):
+            # Ensure the quaternion is normalized
+            q = q / np.linalg.norm([q.w, q.x, q.y, q.z])
+            
+            # Extract the Euler angles from the quaternion
+            roll = np.arctan2(2 * (q.w * q.x + q.y * q.z), 1 - 2 * (q.x * q.x + q.y * q.y))
+            pitch = np.arcsin(2 * (q.w * q.y - q.z * q.x))
+            yaw = np.arctan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+            
+            return roll, pitch, yaw
+        def convert_to_xyz_rpy(x, y, z, qx, qy, qz, qw):
+            q = np.quaternion(qw, qx, qy, qz)
+            roll, pitch, yaw = quaternion_to_rpy(q)
+            return np.array([x, y, z, roll, pitch, yaw])
+
+        target_pos_orn = np.array([-0.09, -0.10, 1.01, 0.99, -0.00, 0.78, 0.00])
+
+        self.controller.set_target(convert_to_xyz_rpy(*target_pos_orn))
+
+        x_action, y_action, z_action, roll_action, pitch_action, yaw_action = self.controller(np.array(current_pos_orn))
+
+        action = [x_action, y_action, z_action, roll_action, pitch_action, yaw_action]
+        _action = [round(coord, 2) for coord in action]
+        _current_pos_ord_euler = KATUtils.quaternion_to_euler(current_pos_orn[3:7])
+
+        with open("_position_control.txt", "a") as f:
+            f.write(str(current_pos_orn))
+            f.write("\n")
+        with open("_action_control.txt", "a") as f:
+            f.write(str(_action))
+            f.write("\n")
+
+        x, y, z, roll, pitch, yaw = action
+
+        return torch.tensor([[x,y,z,roll,pitch,yaw,0]]) # remove to activate GPT querying
+
+        # self.llm_queried = True
         if self.llm_queried == False:
             context_description = "You are a robot and you are to genereate the possible waypoits in triplets formed of (dx, dy, dz), the format is [[front waypoint], [right waypoint], [right waypoint], gripper value] based on the input in json format with the key: 'waypoints' and to 2 decimal places"
             obs_dictionary = self._obs_to_obsdict(obs_dict["object"][0])
@@ -320,15 +362,19 @@ class KAT(PolicyAlgo):
             instruction = "Give the full answer. Generate waypoint paths that you can do based on the objects in the scene in json format as a list of waypoints do not split up into position and orientation: "
 
             self.kat_action_list = self.open_ai_client.process_test(self.prompt_path, instruction, scene_objects, context_description)
+            self.llm_queried = True
 
             # save the kat_action_list to a file
             with open("_kat_action_list.txt", "a") as f:
                 for kat_action in self.kat_action_list:
+                    # write to 2dp 
+                    # k = [round(coord, 2) for coord in kat_action]
                     f.write(str(kat_action))
+
                     f.write("\n")
                 f.write("=====================================\n")
 
-            self.action_list = []
+            self.ee_state_list = []
             for kat_action in self.kat_action_list:
                 # with open("_action_sequence_XXX.txt", "a") as f:
                 #     f.write(str(kat_action))
@@ -340,62 +386,59 @@ class KAT(PolicyAlgo):
 
                 gripper = self._gripper_0_to_1(kat_action[3], mode="decode")
                 # print(kat_action)
-                # with open("_action_sequence_XX.txt", "a") as f:
-                #     f.write(str(kat_action))
-                #     f.write("\n")
-
-                action = KATUtils.inverse_generate_waypoints(np.array(kat_action[0]), np.array(kat_action[1]), np.array(kat_action[2])) # returns the action in the form of [dx, dy, dz, droll, dpitch, dyaw]
-                x, y, z, roll, pitch, yaw = action
 
 
-                self.action_list.append([x, y, z, roll, pitch, yaw, gripper]) # append the action and the gripper value
+                state = KATUtils.inverse_generate_waypoints(np.array(kat_action[0]), np.array(kat_action[1]), np.array(kat_action[2])) # returns the action in the form of [dx, dy, dz, droll, dpitch, dyaw]
+                x, y, z, roll, pitch, yaw = state
 
-                # save action_list to a file
-            with open("_action_list.txt", "a") as f:
-                for action in self.action_list:
-                    f.write(str(action))
+                self.ee_state_list.append([x, y, z, roll, pitch, yaw, gripper]) # append the action and the gripper value
+
+            with open("_ee_state_list.txt", "a") as f:
+                for ee_state in self.ee_state_list:
+                    e = [round(coord, 2) for coord in ee_state]
+                    f.write(str(e))
                     f.write("\n")
-                f.write("=====================================\n")
-                
-            # go through all the states and apply tanh to the action
-            self.state_to_action_list = []
-            for action in self.action_list:
-                action = np.tanh(action)
-                self.state_to_action_list.append(action)
+
+            with open('_planned_trajectory.pkl', 'wb') as file:
+                pickle.dump(self.ee_state_list, file)
+
+        # self.controller.set_tuning(5, 0.1)
+
+        # if self.action_iteration == None:
+        #     with open('_planned_trajectory.pkl', 'rb') as file:
+        #         self.ee_state_list = pickle.load(file)
 
 
-            self.llm_queried = True
-
-            with open("_action_sequence_raw.txt", "a") as f:
-                for action in self.state_to_action_list:
-                    f.write(str(action))
-                    f.write("\n")
-                f.write("=====================================\n")
-
-        if self.action_iteration < self.run_length:
-            self.action_to_execute = []
-
+        # make sure that enough time is given for the robot to reach the desired state
+        if (self.action_iteration == None) or (self.action_iteration >= self.run_length):
+            self.action_iteration = 0
             # Loop until an action with the desired length is found
-            while len(self.action_to_execute) != 7:
-                if not self.state_to_action_list or len(self.state_to_action_list) == 0:
-                    return torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
-                self.action_to_execute = self.state_to_action_list.pop(0)
+            # while len(self.action_to_execute) != 7:
+                # check if the list is empty and return a zero tensor
+            if not self.ee_state_list or len(self.ee_state_list) == 0:
+                return torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+            self.state_to_execute = self.ee_state_list.pop(0)
+            with open("_visited_states.txt", "a") as f:
+                f.write("=========================")
+                f.write(str(self.state_to_execute))
+                f.write("\n")
+            
 
-            # create a file with the action appended on a new line
+        # calculate action to exectute to get to the desired state 
+        current_pos_orn = obs_dict["robot0_eef_pos"][0].tolist() + obs_dict["robot0_eef_quat"][0].tolist() # x,y,z,quaternion
+        self.controller.set_target(self.state_to_execute[:6])
+        x_action, y_action, z_action, roll_action, pitch_action, yaw_action = self.controller(np.array(current_pos_orn))
+
+        
+
+        self.action_iteration += 1
+        self.action_to_execute = [x_action, y_action, z_action, roll_action, pitch_action, yaw_action, self.state_to_execute[6]]
+        with open("_visited_states.txt", "a") as f:
+                f.write(str(current_pos_orn))
+                f.write("\n")
         with open("_action_sequence.txt", "a") as f:
             f.write(str(self.action_to_execute))
-            f.write("\n")  
-
         return torch.tensor([self.action_to_execute])
-
-        # 
-        # action = self.nets["policy"](obs_dict, goal_dict=goal_dict)
-        # # save action to a file
-        # with open("_action_sequence.txt", "a") as f:
-        #     f.write(str(action.tolist()))
-        #     f.write("\n")
-
-        # return self.nets["policy"](obs_dict, goal_dict=goal_dict)
 
     def reset(self):
         """
