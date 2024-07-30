@@ -21,12 +21,14 @@ from robomimic.algo import register_algo_factory_func, PolicyAlgo
 
 import llminterface.llm_utils as LLMUtils
 import katinterface.kat_utils as KATUtils
+from katinterface.kat_func_utils import *
 
 import json
 import time
 import random
 import h5py
 import numpy as np
+import pickle
 
 @register_algo_factory_func("multi_kat")
 def algo_config_to_class(algo_config):
@@ -83,7 +85,9 @@ class Multi_KAT(PolicyAlgo):
         self.prompt_path = "_demo_data.txt"
         self.action_iteration = 0
         self.action_to_execute = []
+        
 
+        self.data_capture = {}
         self._setup()
 
     def _setup(self):
@@ -163,7 +167,6 @@ class Multi_KAT(PolicyAlgo):
     def _add_garenteed_demonstration_data(self):
          for demo_iter, demo_id in enumerate(self.garanteed_demonstation_data_ids):
             # generate a random number from 0 to X and reroll if number is in the demo_ids
-
             if len(self.demo_ids) == self.total_number_of_demos:
                 assert False, "All demos have been queried"
 
@@ -174,46 +177,18 @@ class Multi_KAT(PolicyAlgo):
             # get the demo data
             demo_data = self._demonstation_data(demo_id)
 
-            # subsample the data to self.sample_frequency
-            demo_data["actions"] = demo_data["actions"][::self.sample_frequency]
+            starting_obs, waypoint_trajectory, action_token_trajectory = demo_data_to_prompt_format(demo_data, self.sample_frequency, self.decimal_places)
 
-            starting_obs = demo_data["obs"]["object"][0].round(self.decimal_places)
-            starting_obs = self._obs_to_obsdict(starting_obs)
-            starting_obs_size = len(starting_obs)
+            if self.data_capture.get("demonsration_data") is None:
+                self.data_capture["demonsration_data"] = []
+            self.data_capture["demonsration_data"].append({"starting_obs": starting_obs, "waypoint_trajectory": waypoint_trajectory, "action_token_trajectory": action_token_trajectory})
 
-            actions = demo_data["actions"].round(self.decimal_places)
-            actions_size = len(actions)
-            actions_deomonstation_legnth = len(actions[0])
-
-            kat_actions = []
-            for action in actions:
-                left_position, right_position, front_position, gripper = KATUtils.generate_waypoints(action)
-                # round to self.decimal_places and convert to list
-                # front_position = [round(coord, self.decimal_places) for coord in front_position]
-                # right_position = [round(coord, self.decimal_places) for coord in right_position]
-                # left_position = [round(coord, self.decimal_places) for coord in left_position]
-
-                gripper = self._gripper_0_to_1(gripper, mode="encode")
-
-                # mulitply all values by 100 to eliminate decimal place 
-                front_position = [int(coord * 100) for coord in front_position]
-                right_position = [int(coord * 100) for coord in right_position]
-                left_position = [int(coord * 100) for coord in left_position]
-                # remove decial place values 
-                front_position = [round(coord, 0) for coord in front_position]
-                right_position = [round(coord, 0) for coord in right_position]
-                left_position = [round(coord, 0) for coord in left_position]
-
-
-                # combine as a list
-                kat_action = [front_position, right_position, left_position, gripper]
-                kat_actions.append(kat_action)
 
             with open(self.prompt_path, "a") as f:
                 f.write(f"Example {demo_iter}:\n")
                 f.write(f"Input: {starting_obs}\n")
                 # f.write(f"Output: {actions.tolist()}\n")
-                f.write(f"Output: {kat_actions}\n")
+                f.write(f"Output: {action_token_trajectory}\n")
 
     def _add_requestable_demonstration_data(self):
         for demo_iter, demo_id in enumerate(self.requestable_demonstation_data_ids):
@@ -228,11 +203,9 @@ class Multi_KAT(PolicyAlgo):
             demo_data = self._demonstation_data(demo_id)
 
             # get the first observation
-            starting_obs = demo_data["obs"]["object"][0].round(self.decimal_places)
-            starting_obs = self._obs_to_obsdict(starting_obs)
-            starting_obs_size = len(starting_obs)
+            starting_obs, waypoint_trajectory, action_token_trajectory = demo_data_to_prompt_format(demo_data, self.sample_frequency, self.decimal_places)
+        
 
-            # Send to the LLM
             context_description = "You are a robot and you are to genereate the possible waypoits in triplets formed of (dx, dy, dz), the format is [[front waypoint], [right waypoint], [right waypoint], gripper value] based on the input in json format with the key: 'waypoints' and to 2 decimal places"
             scene_objects = str(starting_obs)
             instruction = "Give the full answer. Generate waypoint paths that you can do based on the objects in the scene in json format as a list of waypoints do not split up into position and orientation: "
@@ -248,7 +221,22 @@ class Multi_KAT(PolicyAlgo):
 
             with open("_demo_data_temp.txt", "w") as f:
                 f.write(prompt_data)
-            help_needed = self.open_ai_client.process_ensemble_training("_demo_data_temp.txt", instruction, scene_objects, context_description, self.ensemble_size, temperature=0.2)
+            help_needed, generated_pathways = self.open_ai_client.process_ensemble_training("_demo_data_temp.txt", instruction, scene_objects, context_description, self.ensemble_size, temperature=0.2)
+
+            self.data_capture["object"] = starting_obs
+            # generated pathways kat conver to waypoints and store in data_capture
+            # ..... for loop through all the generated path ways convert to waypoints then add to generated_pathways dictionary then save to data capture.
+            for i, generated_pathway in enumerate(generated_pathways):
+                waypoint_trajectory = action_token_to_waypoint(generated_pathways[i]["action_token_trajectory"])
+                generated_pathways[i]["waypoint_trajectory"] = waypoint_trajectory
+
+            self.data_capture["generated_pathways"] = generated_pathways
+            self.data_capture["expert_trajectory"] = waypoint_trajectory
+
+            # save data capture to a pickle file
+            with open(f"_data_capture_{demo_id}.pkl", "wb") as f:
+                pickle.dump(self.data_capture, f)
+
 
             if help_needed:
                 # subsample the data to self.sample_frequency
@@ -351,6 +339,7 @@ class Multi_KAT(PolicyAlgo):
         return self.nets["policy"](obs_dict, goal_dict=goal_dict) #Remove to activate GPT Querying
 
 
+        # TODO update this to match KAT.py
         if self.llm_queried == False:
             context_description = "You are a robot and you are to genereate the possible waypoits in triplets formed of (dx, dy, dz), the format is [[front waypoint], [right waypoint], [right waypoint], gripper value] based on the input in json format with the key: 'waypoints' and to 2 decimal places"
             obs_dictionary = self._obs_to_obsdict(obs_dict["object"][0])

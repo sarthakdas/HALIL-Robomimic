@@ -22,6 +22,7 @@ from robomimic.algo import register_algo_factory_func, PolicyAlgo
 import llminterface.llm_utils as LLMUtils
 import katinterface.kat_utils as KATUtils
 import katinterface.pidcontroller as PIDController
+from katinterface.kat_func_utils import *
 
 import json
 import time
@@ -77,9 +78,10 @@ class KAT(PolicyAlgo):
         self.llm_response = None
         self.demo_ids = []
         self.prompt_path = "_demo_data.txt"
-        self.action_iteration = None
+        self.action_iteration = 0
         self.action_to_execute = []
 
+        self.data_capture = {}
         self._setup()
 
     def _setup(self):
@@ -115,7 +117,7 @@ class KAT(PolicyAlgo):
         # this minimizes the amount of data transferred to GPU
         return TensorUtils.to_float(TensorUtils.to_device(input_batch, self.device))
 
-    def _demonstation_data(self, demo_id):
+    def _get_demonstation_data(self, demo_id):
         '''
         Get the demonstration data from the hdf5 file
         '''
@@ -146,19 +148,6 @@ class KAT(PolicyAlgo):
 
         return trajectory
 
-    def _obs_to_obsdict(self, obs):
-        obs_position = obs[0:3]
-        obs_orientation = obs[3:7] # quaterion
-        obs_obj_to_ee_position = obs[7:10]
-        obs_obj_to_ee_orientation = obs[10:14] # quaternion
-
-        return {
-            "object": obs_position.tolist(),
-            "object_orientation": obs_orientation.tolist(),
-            "object_to_eef_position": obs_obj_to_ee_position.tolist(),
-            "object_to_eef_orientation": obs_obj_to_ee_orientation.tolist()
-        }
-
     def train_on_batch(self, batch, epoch, validate=False):
         """
         Training on a single batch of data.
@@ -182,88 +171,34 @@ class KAT(PolicyAlgo):
         for demo_iter in range(self.number_of_demonstations):
             # generate a random number from 0 to X and reroll if number is in the demo_ids
             demo_id = random.randint(0, self.total_number_of_demos - 1)
-
             if len(self.demo_ids) == self.total_number_of_demos:
                 assert False, "All demos have been queried"
-
             while demo_id in self.demo_ids :
                 demo_id = random.randint(0, self.total_number_of_demos - 1)
             self.demo_ids.append(demo_id)
 
             # get the demo data
-            demo_data = self._demonstation_data(demo_id)
+            demo_data = self._get_demonstation_data(demo_id)
 
             # subsample the data to self.sample_frequency
-            demo_data["actions"] = demo_data["actions"][::self.sample_frequency]
+            starting_obs, waypoint_trajectory, action_token_trajectory = demo_data_to_prompt_format(demo_data, self.sample_frequency, self.decimal_places)
+            
 
-            starting_obs = demo_data["obs"]["object"][0].round(self.decimal_places)
-            starting_obs = self._obs_to_obsdict(starting_obs)
-            # multiply all values by 100 to eliminate decimal place 
-            starting_obs["object"] = [int(coord * 100) for coord in starting_obs["object"]]
-            starting_obs["object_orientation"] = [int(coord * 100) for coord in starting_obs["object_orientation"]]
-            # delete the object_to_eef_position and object_to_eef_orientation
-            del starting_obs["object_to_eef_position"]
-            del starting_obs["object_to_eef_orientation"]
+            if self.data_capture.get("demonstation_data") is None:
+                self.data_capture["demonstation_data"] = []
 
-            starting_obs_size = len(starting_obs)
+            self.data_capture["demonstation_data"].append({
+                "starting_obs": starting_obs,
+                "waypoint_trajectory": waypoint_trajectory,
+                "action_token_trajectory": action_token_trajectory
+            })
 
-            actions = demo_data["actions"].round(self.decimal_places)
-            actions_size = len(actions)
-            actions_deomonstation_legnth = len(actions[0])
-
-            robot_ee_position = demo_data["obs"]["robot0_eef_pos"][::self.sample_frequency].round(self.decimal_places)
-            robot_ee_quaternion = demo_data["obs"]["robot0_eef_quat"][::self.sample_frequency].round(self.decimal_places)
-
-            # get only the last index of the actions
-            gripper_values = actions[:, -1]
-
-            robot_ee_pos_quate_gripper = np.concatenate((robot_ee_position, robot_ee_quaternion, gripper_values[:, None]), axis=1)
-            robot_ee_pos_quate_gripper = np.round(robot_ee_pos_quate_gripper, self.decimal_places)
-            # save the robot_ee_pos_quate_gripper to a file
-            # with open("_robot_ee_pos_quate_gripper.txt", "a") as f:
-            #     f.write(f"{robot_ee_pos_quate_gripper}\n")
-            #     f.write("-=================================-")
-
-            # save the data to a file
-            # convert to list actions 
-
-
-            # save the starting observation to a file as a list 
-            with open("_demo_starting_observation.txt", "a") as f:
-                s = starting_obs["object"]
-                f.write(f"{s}\n")
-
-            kat_actions = []
-            for robot_state in robot_ee_pos_quate_gripper:
-                _robot_state = robot_state.tolist()
-                with open("_demonstrations_raw.txt", "a") as f:
-                    f.write(f"{_robot_state}\n")
-                left_position, right_position, front_position, gripper = KATUtils.generate_waypoints_quaternion(robot_state)
-                # round to self.decimal_places and convert to list
-                # front_position = [round(coord, self.decimal_places) for coord in front_position]
-                # right_position = [round(coord, self.decimal_places) for coord in right_position]
-                # left_position = [round(coord, self.decimal_places) for coord in left_position]
-                gripper = self._gripper_0_to_1(gripper, mode="encode")
-
-                # mulitply all values by 100 to eliminate decimal place 
-                front_position = [int(coord * 100) for coord in front_position]
-                right_position = [int(coord * 100) for coord in right_position]
-                left_position = [int(coord * 100) for coord in left_position]
-                # remove decial place values 
-                front_position = [round(coord, 0) for coord in front_position]
-                right_position = [round(coord, 0) for coord in right_position]
-                left_position = [round(coord, 0) for coord in left_position]
-
-
-                # combine as a list
-                kat_action = [front_position, right_position, left_position, gripper]
-                kat_actions.append(kat_action)
 
             with open(self.prompt_path, "a") as f:
                 f.write(f"Example {demo_iter}:\n")
                 f.write(f"Input: {starting_obs}\n")
                 # f.write(f"Output: {actions.tolist()}\n")
-                f.write(f"Output: {kat_actions}\n")
+                f.write(f"Output: {action_token_trajectory}\n")
 
         return info
 
@@ -279,15 +214,7 @@ class KAT(PolicyAlgo):
             loss_log (dict): name -> summary statistic
         """
         log = super(KAT, self).log_info(info)
-        # log["Loss"] = info["losses"]["action_loss"].item()
-        # if "l2_loss" in info["losses"]:
-        #     log["L2_Loss"] = info["losses"]["l2_loss"].item()
-        # if "l1_loss" in info["losses"]:
-        #     log["L1_Loss"] = info["losses"]["l1_loss"].item()
-        # if "cos_loss" in info["losses"]:
-        #     log["Cosine_Loss"] = info["losses"]["cos_loss"].item()
-        # if "policy_grad_norms" in info:
-        #     log["Policy_Grad_Norms"] = info["policy_grad_norms"]
+
         return log
 
     def get_action(self, obs_dict, goal_dict=None):
@@ -303,141 +230,48 @@ class KAT(PolicyAlgo):
         """
         assert not self.nets.training
 
-        # with open("_obs_dictionary.txt", "a") as f:
-        #     f.write(str(obs_dict))
-        #     f.write("\n")
 
-        # print to two dp
-        current_pos_orn = obs_dict["robot0_eef_pos"][0].tolist() + obs_dict["robot0_eef_quat"][0].tolist() # x,y,z,quaternion
-
-        self.controller.epsilon = 0.01
-        self.controller.set_tuning(1, 0.1)
-        # # print to 2dp
-        def quaternion_to_rpy(q):
-            # Ensure the quaternion is normalized
-            q = q / np.linalg.norm([q.w, q.x, q.y, q.z])
-            
-            # Extract the Euler angles from the quaternion
-            roll = np.arctan2(2 * (q.w * q.x + q.y * q.z), 1 - 2 * (q.x * q.x + q.y * q.y))
-            pitch = np.arcsin(2 * (q.w * q.y - q.z * q.x))
-            yaw = np.arctan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-            
-            return roll, pitch, yaw
-        def convert_to_xyz_rpy(x, y, z, qx, qy, qz, qw):
-            q = np.quaternion(qw, qx, qy, qz)
-            roll, pitch, yaw = quaternion_to_rpy(q)
-            return np.array([x, y, z, roll, pitch, yaw])
-
-        target_pos_orn = np.array([-0.09, -0.10, 1.01, 0.99, -0.00, 0.78, 0.00])
-
-        self.controller.set_target(convert_to_xyz_rpy(*target_pos_orn))
-
-        x_action, y_action, z_action, roll_action, pitch_action, yaw_action = self.controller(np.array(current_pos_orn))
-
-        action = [x_action, y_action, z_action, roll_action, pitch_action, yaw_action]
-        _action = [round(coord, 2) for coord in action]
-        _current_pos_ord_euler = KATUtils.quaternion_to_euler(current_pos_orn[3:7])
-
-        with open("_position_control.txt", "a") as f:
-            f.write(str(current_pos_orn))
-            f.write("\n")
-        with open("_action_control.txt", "a") as f:
-            f.write(str(_action))
-            f.write("\n")
-
-        x, y, z, roll, pitch, yaw = action
-
-        return torch.tensor([[x,y,z,roll,pitch,yaw,0]]) # remove to activate GPT querying
-
-        # self.llm_queried = True
         if self.llm_queried == False:
             context_description = "You are a robot and you are to genereate the possible waypoits in triplets formed of (dx, dy, dz), the format is [[front waypoint], [right waypoint], [right waypoint], gripper value] based on the input in json format with the key: 'waypoints' and to 2 decimal places"
-            obs_dictionary = self._obs_to_obsdict(obs_dict["object"][0])
-            obs_dictionary["object"] = [int(coord * 100) for coord in obs_dictionary["object"]]
-            obs_dictionary["object_orientation"] = [int(coord * 100) for coord in obs_dictionary["object_orientation"]]
-            # delete the object_to_eef_position and object_to_eef_orientation
-            del obs_dictionary["object_to_eef_position"]
-            del obs_dictionary["object_to_eef_orientation"]
-            scene_objects = str(obs_dictionary)
+            scene_objects = rollout_action_to_input_format(obs_dict["object"], self.decimal_places)
             instruction = "Give the full answer. Generate waypoint paths that you can do based on the objects in the scene in json format as a list of waypoints do not split up into position and orientation: "
 
             self.kat_action_list = self.open_ai_client.process_test(self.prompt_path, instruction, scene_objects, context_description)
             self.llm_queried = True
 
-            # save the kat_action_list to a file
-            with open("_kat_action_list.txt", "a") as f:
-                for kat_action in self.kat_action_list:
-                    # write to 2dp 
-                    # k = [round(coord, 2) for coord in kat_action]
-                    f.write(str(kat_action))
+            self.waypoint_list_compresssed = action_token_to_waypoint(self.kat_action_list)
 
-                    f.write("\n")
-                f.write("=====================================\n")
-
-            self.ee_state_list = []
-            for kat_action in self.kat_action_list:
-                # with open("_action_sequence_XXX.txt", "a") as f:
-                #     f.write(str(kat_action))
-                #     f.write("\n")
-                # divide all values by 100 to get the decimal value
-                kat_action[0] = [coord / 100 for coord in kat_action[0]]
-                kat_action[1] = [coord / 100 for coord in kat_action[1]]
-                kat_action[2] = [coord / 100 for coord in kat_action[2]]
-
-                gripper = self._gripper_0_to_1(kat_action[3], mode="decode")
-                # print(kat_action)
-
-
-                state = KATUtils.inverse_generate_waypoints(np.array(kat_action[0]), np.array(kat_action[1]), np.array(kat_action[2])) # returns the action in the form of [dx, dy, dz, droll, dpitch, dyaw]
-                x, y, z, roll, pitch, yaw = state
-
-                self.ee_state_list.append([x, y, z, roll, pitch, yaw, gripper]) # append the action and the gripper value
-
-            with open("_ee_state_list.txt", "a") as f:
-                for ee_state in self.ee_state_list:
-                    e = [round(coord, 2) for coord in ee_state]
-                    f.write(str(e))
-                    f.write("\n")
-
-            with open('_planned_trajectory.pkl', 'wb') as file:
-                pickle.dump(self.ee_state_list, file)
-
-        # self.controller.set_tuning(5, 0.1)
-
-        # if self.action_iteration == None:
-        #     with open('_planned_trajectory.pkl', 'rb') as file:
-        #         self.ee_state_list = pickle.load(file)
-
+            # multiply each action by the run length
+            self.waypoint_list = [x for x in self.waypoint_list_compresssed for _ in range(self.run_length)]
 
         # make sure that enough time is given for the robot to reach the desired state
-        if (self.action_iteration == None) or (self.action_iteration >= self.run_length):
-            self.action_iteration = 0
-            # Loop until an action with the desired length is found
-            # while len(self.action_to_execute) != 7:
-                # check if the list is empty and return a zero tensor
-            if not self.ee_state_list or len(self.ee_state_list) == 0:
-                return torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
-            self.state_to_execute = self.ee_state_list.pop(0)
-            with open("_visited_states.txt", "a") as f:
-                f.write("=========================")
-                f.write(str(self.state_to_execute))
-                f.write("\n")
-            
-
+        if not self.waypoint_list or len(self.waypoint_list) == 0:
+            with open("_actions_executed.txt", "a") as f:
+                f.write(f"[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]\n")
+            return torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+        self.state_to_execute = self.waypoint_list.pop(0)
+        
         # calculate action to exectute to get to the desired state 
         current_pos_orn = obs_dict["robot0_eef_pos"][0].tolist() + obs_dict["robot0_eef_quat"][0].tolist() # x,y,z,quaternion
         self.controller.set_target(self.state_to_execute[:6])
         x_action, y_action, z_action, roll_action, pitch_action, yaw_action = self.controller(np.array(current_pos_orn))
 
-        
+        # fix no roll
+        # roll_action = 0
+        # pitch_action = 0
+        # yaw_action = 0
 
-        self.action_iteration += 1
+        self.rollout_capture.append({
+            "observation": obs_dict,
+            "current_eef_pos_orn": current_pos_orn,
+            "target_state": self.state_to_execute,
+        })
+        
+        # save the action to execute
+        with open("_actions_executed.txt", "a") as f:
+            f.write(f"{x_action, y_action, z_action, roll_action, pitch_action, yaw_action}\n")
+
         self.action_to_execute = [x_action, y_action, z_action, roll_action, pitch_action, yaw_action, self.state_to_execute[6]]
-        with open("_visited_states.txt", "a") as f:
-                f.write(str(current_pos_orn))
-                f.write("\n")
-        with open("_action_sequence.txt", "a") as f:
-            f.write(str(self.action_to_execute))
         return torch.tensor([self.action_to_execute])
 
     def reset(self):
@@ -446,9 +280,20 @@ class KAT(PolicyAlgo):
         """
         self.llm_queried = False
         self.llm_response = None
+        self.action_iteration = self.run_length
         with open("_action_sequence.txt", "a") as f:
             f.write("=========================\n")
-        time.sleep(60)
+
+        if self.data_capture.get("rollout") is None:
+            self.data_capture["rollout"] = []
+            self.rollout_capture = []
+        else:
+            self.data_capture["rollout"].append(self.rollout_capture)
+            self.rollout_capture = []
+
+        # pick save data_capture to file
+        with open("_data_capture_kat.pkl", "wb") as f:
+            pickle.dump(self.data_capture, f)
 
     def on_epoch_end(self, epoch):
         with open(self.prompt_path, "a") as f:
@@ -458,14 +303,3 @@ class KAT(PolicyAlgo):
             f.write("Now do it for this input {scene_objects}\n")
         return super().on_epoch_end(epoch)
 
-    def _gripper_0_to_1(self, gripper, mode="encode"):
-        if mode == "encode":
-            if gripper == -1:
-                return 0
-            else:
-                return 1
-        elif mode == "decode":
-            if gripper == 0:
-                return -1
-            else:
-                return 1

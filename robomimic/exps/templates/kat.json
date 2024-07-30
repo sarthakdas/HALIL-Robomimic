@@ -28,8 +28,8 @@
         "video_skip": 5,
         "rollout": {
             "enabled": true,
-            "n": 1,
-            "horizon": 1000,
+            "n": 10,
+            "horizon": 3000,
             "rate": 50,
             "warmstart": 0,
             "terminate_on_success": true
@@ -61,11 +61,11 @@
         "seed": 1
     },
     "algo": {
-        "sample_frequency": 2,
-        "run_length": 10,
+        "sample_frequency": 1,
+        "run_length": 25,
         "decimal_places": 2,
-        "demonstation_data_path": "tmp/lift.hdf5",
-        "number_of_demonstrations": 30,
+        "demonstation_data_path": "tmp/can.hdf5",
+        "number_of_demonstrations": 25,
         "optim_params": {}
     },
     "observation": {

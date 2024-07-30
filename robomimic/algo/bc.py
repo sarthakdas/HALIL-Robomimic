@@ -170,56 +170,56 @@ class BC(PolicyAlgo):
         info = super(BC, self).train_on_batch(batch, epoch, validate=validate)
 
         # generate a random number from 0 to X and reroll if number is in the demo_ids
-        demo_id = random.randint(0, self.number_of_demos - 1)
+        # demo_id = random.randint(0, self.number_of_demos - 1)
 
-        if len(self.demo_ids) == self.number_of_demos:
-            assert False, "All demos have been queried"
+        # # if len(self.demo_ids) == self.number_of_demos:
+        # #     assert False, "All demos have been queried"
 
-        while demo_id in self.demo_ids :
-            demo_id = random.randint(0, self.number_of_demos - 1)
-        self.demo_ids.append(demo_id)
+        # while demo_id in self.demo_ids :
+        #     demo_id = random.randint(0, self.number_of_demos - 1)
+        # self.demo_ids.append(demo_id)
 
-        # get the demo data
-        demo_data = self._demonstation_data(demo_id)
+        # # get the demo data
+        # demo_data = self._demonstation_data(demo_id)
 
-        # subsample the data to self.sample_frequency
-        demo_data["actions"] = demo_data["actions"][::self.sample_frequency]
+        # # subsample the data to self.sample_frequency
+        # demo_data["actions"] = demo_data["actions"][::self.sample_frequency]
 
-        starting_obs = demo_data["obs"]["object"][0].round(self.decimal_places)
-        starting_obs = self._obs_to_obsdict(starting_obs)
-        starting_obs_size = len(starting_obs)
+        # starting_obs = demo_data["obs"]["object"][0].round(self.decimal_places)
+        # starting_obs = self._obs_to_obsdict(starting_obs)
+        # starting_obs_size = len(starting_obs)
 
-        actions = demo_data["actions"].round(self.decimal_places)
-        actions_size = len(actions)
-        actions_deomonstation_legnth = len(actions[0])
+        # actions = demo_data["actions"].round(self.decimal_places)
+        # actions_size = len(actions)
+        # actions_deomonstation_legnth = len(actions[0])
 
-        kat_actions = []
-        for action in actions:
-            left_position, right_position, front_position, gripper = KATUtils.generate_waypoints(action)
-            # round to self.decimal_places and convert to list
-            # front_position = [round(coord, self.decimal_places) for coord in front_position]
-            # right_position = [round(coord, self.decimal_places) for coord in right_position]
-            # left_position = [round(coord, self.decimal_places) for coord in left_position]
+        # kat_actions = []
+        # for action in actions:
+        #     left_position, right_position, front_position, gripper = KATUtils.generate_waypoints(action)
+        #     # round to self.decimal_places and convert to list
+        #     # front_position = [round(coord, self.decimal_places) for coord in front_position]
+        #     # right_position = [round(coord, self.decimal_places) for coord in right_position]
+        #     # left_position = [round(coord, self.decimal_places) for coord in left_position]
 
-            # mulitply all values by 100 to eliminate decimal place 
-            front_position = [int(coord * 100) for coord in front_position]
-            right_position = [int(coord * 100) for coord in right_position]
-            left_position = [int(coord * 100) for coord in left_position]
-            # remove decial place values 
-            front_position = [round(coord, 0) for coord in front_position]
-            right_position = [round(coord, 0) for coord in right_position]
-            left_position = [round(coord, 0) for coord in left_position]
+        #     # mulitply all values by 100 to eliminate decimal place 
+        #     front_position = [int(coord * 100) for coord in front_position]
+        #     right_position = [int(coord * 100) for coord in right_position]
+        #     left_position = [int(coord * 100) for coord in left_position]
+        #     # remove decial place values 
+        #     front_position = [round(coord, 0) for coord in front_position]
+        #     right_position = [round(coord, 0) for coord in right_position]
+        #     left_position = [round(coord, 0) for coord in left_position]
 
 
-            # combine as a list
-            kat_action = [front_position, right_position, left_position, gripper]
-            kat_actions.append(kat_action)
+        #     # combine as a list
+        #     kat_action = [front_position, right_position, left_position, gripper]
+        #     kat_actions.append(kat_action)
 
-        with open(self.prompt_path, "a") as f:
-            f.write(f"Example {demo_id}:\n")
-            f.write(f"Input: {starting_obs}\n")
-            # f.write(f"Output: {actions.tolist()}\n")
-            f.write(f"Output: {kat_actions}\n")
+        # with open(self.prompt_path, "a") as f:
+        #     f.write(f"Example {demo_id}:\n")
+        #     f.write(f"Input: {starting_obs}\n")
+        #     # f.write(f"Output: {actions.tolist()}\n")
+        #     f.write(f"Output: {kat_actions}\n")
 
         return info
 
@@ -259,9 +259,9 @@ class BC(PolicyAlgo):
         """
         assert not self.nets.training
 
-        # with open("_obs_dictionary.txt", "a") as f:
-        #     f.write(str(obs_dict))
-        #     f.write("\n")
+        with open("_obs_dictionary.txt", "a") as f:
+            f.write(str(obs_dict))
+            f.write("\n")
         # return self.nets["policy"](obs_dict, goal_dict=goal_dict) #Remove to activate GPT Querying
 
 
