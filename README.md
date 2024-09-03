@@ -1,4 +1,4 @@
-# Robomimic Setup Guide
+# HALIL-Robomimic Setup Guide
 
 ## 1. Installation
 
